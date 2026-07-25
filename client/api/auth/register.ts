@@ -15,8 +15,16 @@ export default handleServerless(async (req: VercelRequest, res: VercelResponse) 
 
   const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
   const input = registerSchema.parse(body);
-  const existingUser = await User.exists({ email: input.email });
+  const existingUser = await User.findOne({ email: input.email }).select('+passwordHash');
   if (existingUser) {
+    const pwdMatches = await existingUser.comparePassword(input.password);
+    if (pwdMatches) {
+      res.status(200).json({
+        token: signAccessToken(existingUser.id),
+        user: serializeUser(existingUser),
+      });
+      return;
+    }
     throw new ApiError(409, 'An account with this email already exists.', 'EMAIL_IN_USE');
   }
 

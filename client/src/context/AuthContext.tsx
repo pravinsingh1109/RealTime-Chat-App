@@ -44,11 +44,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
         persistUser(user);
         setSession({ token: initialToken, user });
       })
-      .catch(() => {
+      .catch((err) => {
         if (!alive) return;
-        clearAccessToken();
-        window.localStorage.removeItem(SESSION_KEY);
-        setSession(null);
+        const status = (err as Record<string, unknown>)?.status;
+        if (status === 401) {
+          clearAccessToken();
+          window.localStorage.removeItem(SESSION_KEY);
+          setSession(null);
+        }
       })
       .finally(() => {
         if (alive) setIsBootstrapping(false);
