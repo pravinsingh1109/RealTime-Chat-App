@@ -21,6 +21,7 @@
     { "src": "/api/conversations/(.*)/members", "dest": "/api/conversations/[conversationId]/members.ts" },
     { "src": "/api/uploads/image", "dest": "/api/uploads/image.ts" },
     { "src": "/api/(.*)", "dest": "/api/$1" },
+    { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
