@@ -7,8 +7,13 @@ export interface AuthenticatedVercelRequest extends VercelRequest {
   userId: string;
 }
 
-export type AnyVercelHandler = (
-  req: any,
+export type VercelHandler = (
+  req: VercelRequest,
+  res: VercelResponse
+) => Promise<unknown> | unknown;
+
+export type AuthenticatedVercelHandler = (
+  req: AuthenticatedVercelRequest,
   res: VercelResponse
 ) => Promise<unknown> | unknown;
 
@@ -22,7 +27,9 @@ export function allowCors(res: VercelResponse) {
   );
 }
 
-export function handleServerless(handler: AnyVercelHandler, options: { requireAuth?: boolean } = {}) {
+export function handleServerless(handler: AuthenticatedVercelHandler, options: { requireAuth: true }): (req: VercelRequest, res: VercelResponse) => Promise<void>;
+export function handleServerless(handler: VercelHandler, options?: { requireAuth?: false }): (req: VercelRequest, res: VercelResponse) => Promise<void>;
+export function handleServerless(handler: (req: AuthenticatedVercelRequest, res: VercelResponse) => Promise<unknown> | unknown, options: { requireAuth?: boolean } = {}) {
   return async (req: VercelRequest, res: VercelResponse) => {
     allowCors(res);
 
