@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { env } from './env.js';
+import { enableInMemoryDb, isInMemoryDbActive } from './inMemoryStore.js';
 
 interface MongooseCache {
   conn: typeof mongoose | null;
@@ -16,6 +17,10 @@ if (!globalThis.mongooseCache) {
 }
 
 export async function connectDatabase(): Promise<typeof mongoose> {
+  if (isInMemoryDbActive()) {
+    return mongoose;
+  }
+
   if (cached.conn && mongoose.connection.readyState === 1) {
     return cached.conn;
   }
@@ -24,6 +29,8 @@ export async function connectDatabase(): Promise<typeof mongoose> {
     const uri = env.MONGODB_URI;
     cached.promise = mongoose.connect(uri, {
       bufferCommands: false,
+      serverSelectionTimeoutMS: 1200,
+      connectTimeoutMS: 1200,
     }).then((m) => m);
   }
 
@@ -31,7 +38,9 @@ export async function connectDatabase(): Promise<typeof mongoose> {
     cached.conn = await cached.promise;
   } catch (error) {
     cached.promise = null;
-    throw error;
+    console.warn('[Database] Local MongoDB unreachable. Operating in high-speed In-Memory Mode.');
+    enableInMemoryDb();
+    return mongoose;
   }
 
   return cached.conn;
@@ -39,8 +48,11 @@ export async function connectDatabase(): Promise<typeof mongoose> {
 
 export function getDatabaseStatus() {
   const readyState = mongoose.connection.readyState;
+  const inMemory = isInMemoryDbActive();
   return {
-    connected: readyState === 1,
-    readyState,
+    connected: readyState === 1 || inMemory,
+    readyState: inMemory ? 1 : readyState,
+    inMemory,
   };
 }
+

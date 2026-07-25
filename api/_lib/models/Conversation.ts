@@ -1,4 +1,6 @@
-import { HydratedDocument, Model, Schema, Types, models, model } from 'mongoose';
+import mongoose from 'mongoose';
+import type { HydratedDocument, Model, Types } from 'mongoose';
+import { inMemoryConversationStore, isInMemoryDbActive } from '../inMemoryStore.js';
 
 export type ConversationKind = 'direct' | 'group';
 
@@ -21,21 +23,21 @@ export interface IConversation {
 
 export type ConversationDocument = HydratedDocument<IConversation>;
 
-const groupDetailsSchema = new Schema<IGroupDetails>(
+const groupDetailsSchema = new mongoose.Schema<IGroupDetails>(
   {
     name: { type: String, required: true, trim: true, minlength: 1, maxlength: 100 },
     description: { type: String, trim: true, maxlength: 500 },
     avatarUrl: { type: String, trim: true },
-    createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   },
   { _id: false }
 );
 
-const conversationSchema = new Schema<IConversation>(
+const conversationSchema = new mongoose.Schema<IConversation>(
   {
     kind: { type: String, enum: ['direct', 'group'], required: true },
     members: {
-      type: [{ type: Schema.Types.ObjectId, ref: 'User', required: true }],
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }],
       required: true,
       validate: {
         validator: (members: Types.ObjectId[]) => members.length >= 2 && members.length <= 100,
@@ -44,7 +46,7 @@ const conversationSchema = new Schema<IConversation>(
     },
     directKey: { type: String, unique: true, sparse: true },
     group: { type: groupDetailsSchema, required: false },
-    lastMessage: { type: Schema.Types.ObjectId, ref: 'Message' },
+    lastMessage: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
   },
   { timestamps: true }
 );
@@ -65,4 +67,15 @@ conversationSchema.pre('validate', function validateConversation(next) {
 
 conversationSchema.index({ members: 1, updatedAt: -1 });
 
-export const Conversation: Model<IConversation> = (models.Conversation as Model<IConversation>) || model<IConversation>('Conversation', conversationSchema);
+const realConversationModel: Model<IConversation> = (mongoose.models.Conversation as Model<IConversation>) || mongoose.model<IConversation>('Conversation', conversationSchema);
+
+export const Conversation: Model<IConversation> = new Proxy(realConversationModel, {
+  get(target, prop, receiver) {
+    if (isInMemoryDbActive() && prop in inMemoryConversationStore) {
+      return (inMemoryConversationStore as any)[prop];
+    }
+    return Reflect.get(target, prop, receiver);
+  },
+});
+
+

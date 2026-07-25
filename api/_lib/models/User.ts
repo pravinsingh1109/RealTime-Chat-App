@@ -1,5 +1,7 @@
 import bcrypt from 'bcryptjs';
-import { HydratedDocument, Model, Schema, models, model } from 'mongoose';
+import mongoose from 'mongoose';
+import type { HydratedDocument, Model } from 'mongoose';
+import { inMemoryUserStore, isInMemoryDbActive } from '../inMemoryStore.js';
 
 export interface IUser {
   displayName: string;
@@ -14,7 +16,7 @@ export interface IUser {
 
 export type UserDocument = HydratedDocument<IUser>;
 
-const userSchema = new Schema<IUser>(
+const userSchema = new mongoose.Schema<IUser>(
   {
     displayName: {
       type: String,
@@ -65,4 +67,15 @@ userSchema.methods.comparePassword = async function comparePassword(password: st
   return bcrypt.compare(password, this.passwordHash);
 };
 
-export const User: Model<IUser> = (models.User as Model<IUser>) || model<IUser>('User', userSchema);
+const realUserModel: Model<IUser> = (mongoose.models.User as Model<IUser>) || mongoose.model<IUser>('User', userSchema);
+
+export const User: Model<IUser> = new Proxy(realUserModel, {
+  get(target, prop, receiver) {
+    if (isInMemoryDbActive() && prop in inMemoryUserStore) {
+      return (inMemoryUserStore as any)[prop];
+    }
+    return Reflect.get(target, prop, receiver);
+  },
+});
+
+

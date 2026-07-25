@@ -1,4 +1,6 @@
-import { HydratedDocument, Model, Schema, Types, models, model } from 'mongoose';
+import mongoose from 'mongoose';
+import type { HydratedDocument, Model, Types } from 'mongoose';
+import { inMemoryMessageStore, isInMemoryDbActive } from '../inMemoryStore.js';
 
 export type MessageKind = 'text' | 'image' | 'system';
 
@@ -21,18 +23,18 @@ export interface IMessage {
 
 export type MessageDocument = HydratedDocument<IMessage>;
 
-const readReceiptSchema = new Schema<IReadReceipt>(
+const readReceiptSchema = new mongoose.Schema<IReadReceipt>(
   {
-    user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     readAt: { type: Date, required: true },
   },
   { _id: false }
 );
 
-const messageSchema = new Schema<IMessage>(
+const messageSchema = new mongoose.Schema<IMessage>(
   {
-    conversation: { type: Schema.Types.ObjectId, ref: 'Conversation', required: true, index: true },
-    sender: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    conversation: { type: mongoose.Schema.Types.ObjectId, ref: 'Conversation', required: true, index: true },
+    sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     kind: { type: String, enum: ['text', 'image', 'system'], required: true, default: 'text' },
     content: { type: String, trim: true, maxlength: 4_000 },
     imageUrl: { type: String, trim: true },
@@ -63,4 +65,15 @@ messageSchema.index(
   }
 );
 
-export const Message: Model<IMessage> = (models.Message as Model<IMessage>) || model<IMessage>('Message', messageSchema);
+const realMessageModel: Model<IMessage> = (mongoose.models.Message as Model<IMessage>) || mongoose.model<IMessage>('Message', messageSchema);
+
+export const Message: Model<IMessage> = new Proxy(realMessageModel, {
+  get(target, prop, receiver) {
+    if (isInMemoryDbActive() && prop in inMemoryMessageStore) {
+      return (inMemoryMessageStore as any)[prop];
+    }
+    return Reflect.get(target, prop, receiver);
+  },
+});
+
+
