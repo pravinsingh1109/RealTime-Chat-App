@@ -1,0 +1,25 @@
+{
+  "name": "realtime-chat-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Production-ready real-time chat application",
+  "packageManager": "npm@10.8.2",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "concurrently --names server,client --prefix-colors blue,magenta \"npm --workspace=server run dev\" \"npm --workspace=client run dev\"",
+    "dev:server": "npm --workspace=server run dev",
+    "dev:client": "npm --workspace=client run dev",
+    "build": "npm --workspace=client run build && npm --workspace=server run build",
+    "lint": "npm --workspace=client run lint && npm --workspace=server run lint",
+    "test": "npm --workspace=client run test && npm --workspace=server run test",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs --follow"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
