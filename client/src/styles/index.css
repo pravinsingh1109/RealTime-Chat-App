@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { @apply border-slate-200; }
+  body { @apply m-0 min-w-[320px] bg-slate-100 font-sans antialiased; }
+  button, input, textarea { font: inherit; }
+}
+@layer components {
+  .icon-button { @apply grid size-9 place-items-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-300 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white; }
+  .icon-button svg { @apply size-4; }
+  .field, .auth-input { @apply w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-brand-500 focus:ring-4 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800 dark:focus:border-brand-500 dark:focus:ring-brand-950; }
+  .chat-bg { background-color: #f5f7f6; background-image: radial-gradient(rgba(15, 118, 110, .06) 1px, transparent 1px); background-size: 18px 18px; }
+  .dark .chat-bg { background-color: #111c1b; background-image: radial-gradient(rgba(94, 234, 212, .045) 1px, transparent 1px); }
+}
