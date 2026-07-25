@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { io, type Socket } from 'socket.io-client';
-import { chatApi, normalizeMessage } from '../api/chat';
-import { apiBaseUrl, assetUrl } from '../api/http';
+import type { RealtimeChannel } from '@supabase/supabase-js';
+import { chatApi, normalizeConversation, normalizeMessage } from '../api/chat';
+import { assetUrl, request } from '../api/http';
 import { sortConversations } from '../lib/format';
-import type { Conversation, Message, MessageKind, SocketAck, User } from '../types/chat';
-
-const socketUrl = import.meta.env.VITE_SOCKET_URL
-  || (apiBaseUrl.startsWith('http') ? new URL(apiBaseUrl).origin : window.location.origin);
+import { supabase } from '../lib/supabase';
+import type { Conversation, Message, MessageKind, User } from '../types/chat';
 
 interface ChatState {
   conversations: Conversation[];
@@ -87,11 +85,14 @@ export interface ChatActions {
   refreshConversations: () => Promise<void>;
 }
 
-export function useChat(token: string, currentUser: User): ChatState & ChatActions {
+export function useChat(_token: string, currentUser: User): ChatState & ChatActions {
   const [state, setState] = useState<ChatState>(initialState);
-  const socketRef = useRef<Socket | null>(null);
   const activeConversationIdRef = useRef<string | null>(null);
   const typingTimerRef = useRef<number | undefined>(undefined);
+  const presenceChannelRef = useRef<RealtimeChannel | null>(null);
+  const userChannelRef = useRef<RealtimeChannel | null>(null);
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   const updateConversations = useCallback((updater: (current: Conversation[]) => Conversation[]) => {
     setState((current) => ({ ...current, conversations: sortConversations(updater(current.conversations)) }));
@@ -145,7 +146,6 @@ export function useChat(token: string, currentUser: User): ChatState & ChatActio
     const conversationId = state.activeConversationId;
     if (!conversationId || activeConversationIdRef.current === conversationId) return;
     activeConversationIdRef.current = conversationId;
-    socketRef.current?.emit('conversation:join', { conversationId });
     void loadMessages(conversationId);
   }, [state.activeConversationId, loadMessages]);
 
@@ -158,25 +158,15 @@ export function useChat(token: string, currentUser: User): ChatState & ChatActio
         conversation.id === conversationId ? { ...conversation, unreadCount: 0 } : conversation
       )),
     }));
-    socketRef.current?.emit('conversation:join', { conversationId });
     void loadMessages(conversationId);
   }, [loadMessages]);
 
+  // Supabase Realtime setup for presence and broadcast messages
   useEffect(() => {
-    const socket = io(socketUrl, {
-      auth: { token },
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-    });
-    socketRef.current = socket;
-
-    const onConnect = () => {
+    if (!supabase) {
       setState((current) => ({ ...current, socketConnected: true }));
-      if (activeConversationIdRef.current) {
-        socket.emit('conversation:join', { conversationId: activeConversationIdRef.current });
-      }
-    };
-    const onDisconnect = () => setState((current) => ({ ...current, socketConnected: false }));
+      return;
+    }
 
     const onMessage = (payload: unknown) => {
       const message = normalizeMessage(payload);
@@ -263,24 +253,57 @@ export function useChat(token: string, currentUser: User): ChatState & ChatActio
       }));
     };
 
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-    socket.on('message:new', onMessage);
-    socket.on('new-message', onMessage);
-    socket.on('newMessage', onMessage);
-    socket.on('typing:update', onTyping);
-    socket.on('typing:start', (payload: unknown) => onTyping(payload, true));
-    socket.on('typing:stop', (payload: unknown) => onTyping(payload, false));
-    socket.on('presence:update', onPresence);
-    socket.on('online-users', onOnlineUsers);
-    socket.on('message:seen', onSeen);
+    const onConversationUpdate = (payload: unknown) => {
+      const raw = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+      if (raw.conversation) {
+        const conversation = normalizeConversation(raw.conversation);
+        updateConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
+      }
+    };
+
+    // Presence Channel setup
+    const presenceChannel = supabase.channel('online-users', {
+      config: { presence: { key: currentUser.id } },
+    });
+
+    presenceChannel
+      .on('presence', { event: 'sync' }, () => {
+        const presenceState = presenceChannel.presenceState();
+        const onlineIds = Object.keys(presenceState);
+        onOnlineUsers(onlineIds);
+      })
+      .on('presence', { event: 'join' }, ({ key }) => {
+        onPresence({ userId: key, isOnline: true });
+      })
+      .on('presence', { event: 'leave' }, ({ key }) => {
+        onPresence({ userId: key, isOnline: false });
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await presenceChannel.track({ userId: currentUser.id, onlineAt: new Date().toISOString() });
+          setState((current) => ({ ...current, socketConnected: true }));
+        }
+      });
+    presenceChannelRef.current = presenceChannel;
+
+    // User Channel setup
+    const userChannel = supabase.channel(`user:${currentUser.id}`);
+    userChannel
+      .on('broadcast', { event: 'message:new' }, ({ payload }) => onMessage(payload))
+      .on('broadcast', { event: 'typing:update' }, ({ payload }) => onTyping(payload))
+      .on('broadcast', { event: 'message:seen' }, ({ payload }) => onSeen(payload))
+      .on('broadcast', { event: 'conversation:update' }, ({ payload }) => onConversationUpdate(payload))
+      .subscribe();
+    userChannelRef.current = userChannel;
 
     return () => {
       if (typingTimerRef.current) window.clearTimeout(typingTimerRef.current);
-      socket.disconnect();
-      socketRef.current = null;
+      if (presenceChannelRef.current) void presenceChannelRef.current.unsubscribe();
+      if (userChannelRef.current) void userChannelRef.current.unsubscribe();
+      presenceChannelRef.current = null;
+      userChannelRef.current = null;
     };
-  }, [currentUser.id, token, updateConversations]);
+  }, [currentUser, updateConversations]);
 
   const addOrReplaceMessage = useCallback((message: Message) => {
     setState((current) => ({
@@ -317,7 +340,6 @@ export function useChat(token: string, currentUser: User): ChatState & ChatActio
     imageUrl?: string,
     retryClientId?: string,
   ) => {
-    const socket = socketRef.current;
     const clientId = retryClientId ?? makeClientId();
     const optimistic: Message = {
       id: `optimistic-${clientId}`,
@@ -335,39 +357,24 @@ export function useChat(token: string, currentUser: User): ChatState & ChatActio
     };
     addOrReplaceMessage(optimistic);
 
-    if (!socket?.connected) {
-      markFailed(clientId, conversationId, 'Message not sent — you are offline.');
-      return;
-    }
-
-    socket.emit('message:send', {
-      conversationId,
-      content,
-      type,
-      imageUrl,
-      clientId,
-    }, (ack: SocketAck | unknown) => {
-      const response = ack as SocketAck | undefined;
-      if (response?.error) {
-        markFailed(clientId, conversationId, response.error);
-        return;
-      }
-      if (response?.message) {
-        addOrReplaceMessage(normalizeMessage(response.message));
-        return;
-      }
-      setState((current) => ({
-        ...current,
-        messagesByConversation: {
-          ...current.messagesByConversation,
-          [conversationId]: (current.messagesByConversation[conversationId] ?? []).map((message) => (
-            message.clientId === clientId && message.status === 'sending'
-              ? { ...message, status: 'sent', optimistic: false }
-              : message
-          )),
+    try {
+      const rawMessage = await request<unknown>(`/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        body: {
+          kind: type,
+          content,
+          imageUrl,
+          clientMessageId: clientId,
         },
-      }));
-    });
+      });
+
+      const record = rawMessage && typeof rawMessage === 'object' ? rawMessage as Record<string, unknown> : {};
+      const message = normalizeMessage(record.message ?? rawMessage);
+      addOrReplaceMessage(message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Message not sent.';
+      markFailed(clientId, conversationId, message);
+    }
   }, [addOrReplaceMessage, currentUser, markFailed]);
 
   const sendText = useCallback(async (conversationId: string, content: string) => {
@@ -393,23 +400,57 @@ export function useChat(token: string, currentUser: User): ChatState & ChatActio
   }, [sendPayload]);
 
   const setTyping = useCallback((conversationId: string, isTyping: boolean) => {
-    const socket = socketRef.current;
-    if (!socket?.connected) return;
     if (typingTimerRef.current) window.clearTimeout(typingTimerRef.current);
-    socket.emit('typing:update', { conversationId, isTyping });
+
+    if (supabase) {
+      const activeConv = stateRef.current.conversations.find((c) => c.id === conversationId);
+      if (activeConv) {
+        const otherMembers = activeConv.participants.filter((p) => p.id !== currentUser.id);
+        for (const member of otherMembers) {
+          const channel = supabase.channel(`user:${member.id}`);
+          void channel.send({
+            type: 'broadcast',
+            event: 'typing:update',
+            payload: {
+              conversationId,
+              user: { id: currentUser.id, name: currentUser.name, avatarUrl: currentUser.avatarUrl },
+              isTyping,
+            },
+          });
+        }
+      }
+    }
+
     if (isTyping) {
       typingTimerRef.current = window.setTimeout(() => {
-        socket.emit('typing:update', { conversationId, isTyping: false });
-      }, 1200);
+        if (supabase) {
+          const activeConv = stateRef.current.conversations.find((c) => c.id === conversationId);
+          if (activeConv) {
+            const otherMembers = activeConv.participants.filter((p) => p.id !== currentUser.id);
+            for (const member of otherMembers) {
+              const channel = supabase.channel(`user:${member.id}`);
+              void channel.send({
+                type: 'broadcast',
+                event: 'typing:update',
+                payload: {
+                  conversationId,
+                  user: { id: currentUser.id, name: currentUser.name, avatarUrl: currentUser.avatarUrl },
+                  isTyping: false,
+                },
+              });
+            }
+          }
+        }
+      }, 1500);
     }
-  }, []);
+  }, [currentUser]);
 
-  const markSeen = useCallback((conversationId: string) => {
+  const markSeen = useCallback(async (conversationId: string) => {
     const ids = state.messagesByConversation[conversationId]
       ?.filter((message) => message.senderId !== currentUser.id && message.status !== 'seen')
       .map((message) => message.id) ?? [];
     if (!ids.length) return;
-    socketRef.current?.emit('message:seen', { conversationId, messageIds: ids });
+
     setState((current) => ({
       ...current,
       messagesByConversation: {
@@ -419,6 +460,15 @@ export function useChat(token: string, currentUser: User): ChatState & ChatActio
         )),
       },
     }));
+
+    try {
+      await request<unknown>(`/conversations/${conversationId}/read`, {
+        method: 'POST',
+        body: { messageId: ids[ids.length - 1] },
+      });
+    } catch {
+      // Ignore read receipt errors silently
+    }
   }, [currentUser.id, state.messagesByConversation]);
 
   const createDirect = useCallback(async (participantId: string) => {
@@ -436,7 +486,7 @@ export function useChat(token: string, currentUser: User): ChatState & ChatActio
   }, [selectConversation, updateConversations]);
 
   const retryMessage = useCallback(async (message: Message) => {
-    await sendPayload(message.conversationId, message.content, message.type, message.imageUrl);
+    await sendPayload(message.conversationId, message.content, message.type, message.imageUrl, message.clientId);
   }, [sendPayload]);
 
   const clearError = useCallback(() => {

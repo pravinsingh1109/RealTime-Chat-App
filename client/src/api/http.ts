@@ -68,22 +68,25 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
       // Server uses { error: { code, message, details } } shape
       if (p.error) {
-        const err = p.error as any;
+        const err = p.error;
         if (typeof err === 'string') message = err;
-        else if (typeof err.message === 'string') message = err.message;
-        else if (typeof err.error === 'string') message = err.error;
-        else if (err.details && typeof err.details === 'string') message = err.details;
-        else {
-          try {
-            message = JSON.stringify(err);
-          } catch {
-            message = String(err);
+        else if (typeof err === 'object' && err !== null) {
+          const errRec = err as Record<string, unknown>;
+          if (typeof errRec.message === 'string') message = errRec.message;
+          else if (typeof errRec.error === 'string') message = errRec.error;
+          else if (typeof errRec.details === 'string') message = errRec.details;
+          else {
+            try {
+              message = JSON.stringify(err);
+            } catch {
+              message = String(err);
+            }
           }
         }
       } else {
         // Other payload shapes: { message } or { error }
-        if (typeof (p as any).message === 'string') message = (p as any).message;
-        else if (typeof (p as any).error === 'string') message = (p as any).error;
+        if (typeof p.message === 'string') message = p.message;
+        else if (typeof p.error === 'string') message = p.error;
         else {
           try {
             message = JSON.stringify(p);
@@ -101,7 +104,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 }
 
 export function assetUrl(value?: string): string | undefined {
-  if (!value || /^https?:\/\//i.test(value) || value.startsWith('blob:')) return value;
+  if (!value || /^https?:\/\//i.test(value) || value.startsWith('blob:') || value.startsWith('data:')) return value;
   const origin = apiBaseUrl.startsWith('http') ? new URL(apiBaseUrl).origin : '';
   return `${origin}${value.startsWith('/') ? value : `/${value}`}`;
 }

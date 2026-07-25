@@ -41,27 +41,27 @@ export function AuthScreen(): React.JSX.Element {
       else await login(email.trim(), password);
     } catch (cause) {
       if (cause instanceof ApiError) {
-        const payload = (cause as any).details;
+        const payload = (cause as unknown as Record<string, unknown>).details;
         let topMessage = cause.message;
 
         if (payload && typeof payload === 'object') {
-          const body = payload as any;
+          const body = payload as Record<string, unknown>;
 
           // Prefer explicit server message if present
           if (body.error && typeof body.error === 'object') {
-            if (typeof body.error.message === 'string') topMessage = body.error.message;
+            const serverErr = body.error as Record<string, unknown>;
+            if (typeof serverErr.message === 'string') topMessage = serverErr.message;
 
-            const serverErr = body.error as any;
             const mapped: Record<string, string> = {};
 
             // Map known error codes to fields
             if (serverErr.code === 'DUPLICATE_RESOURCE' || serverErr.code === 'EMAIL_IN_USE') {
-              mapped.email = serverErr.message ?? topMessage;
+              mapped.email = (typeof serverErr.message === 'string' ? serverErr.message : topMessage);
             }
 
             // Zod flatten shape
-            if (serverErr.details && serverErr.details.fieldErrors) {
-              const fe = serverErr.details.fieldErrors as Record<string, string[]>;
+            if (serverErr.details && typeof serverErr.details === 'object' && 'fieldErrors' in (serverErr.details as object)) {
+              const fe = (serverErr.details as { fieldErrors: Record<string, string[]> }).fieldErrors;
               for (const k of Object.keys(fe)) mapped[k] = fe[k][0];
             }
 
@@ -69,8 +69,8 @@ export function AuthScreen(): React.JSX.Element {
           }
 
           // Direct zod flatten fallback
-          if ((body as any).fieldErrors) {
-            const fe = (body as any).fieldErrors as Record<string, string[]>;
+          if (body.fieldErrors && typeof body.fieldErrors === 'object') {
+            const fe = body.fieldErrors as Record<string, string[]>;
             const mapped: Record<string, string> = {};
             for (const k of Object.keys(fe)) mapped[k] = fe[k][0];
             if (Object.keys(mapped).length) setFieldErrors(mapped);
