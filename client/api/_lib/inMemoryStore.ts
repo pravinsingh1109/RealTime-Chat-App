@@ -1,5 +1,8 @@
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 
 export interface MockUser {
   _id: mongoose.Types.ObjectId;
@@ -65,49 +68,273 @@ const users: MockUser[] = globalThis.__inMemoryUsers ?? [];
 const conversations: MockConversation[] = globalThis.__inMemoryConversations ?? [];
 const messages: MockMessage[] = globalThis.__inMemoryMessages ?? [];
 
-if (!globalThis.__inMemoryUsers) {
-  globalThis.__inMemoryUsers = users;
+if (!globalThis.__inMemoryUsers) globalThis.__inMemoryUsers = users;
+if (!globalThis.__inMemoryConversations) globalThis.__inMemoryConversations = conversations;
+if (!globalThis.__inMemoryMessages) globalThis.__inMemoryMessages = messages;
+
+const dbFilePath = path.join(os.tmpdir(), 'pulse-chat-db-v1.json');
+
+function buildUserObj(u: any): MockUser {
+  const _id = typeof u._id === 'string' ? new mongoose.Types.ObjectId(u._id) : (u._id || new mongoose.Types.ObjectId());
+  const now = new Date();
+  const created = u.createdAt ? new Date(u.createdAt) : now;
+  const updated = u.updatedAt ? new Date(u.updatedAt) : now;
+  const lastSeen = u.lastSeen ? new Date(u.lastSeen) : now;
+
+  const doc: MockUser = {
+    _id,
+    id: _id.toString(),
+    displayName: u.displayName,
+    email: String(u.email).toLowerCase(),
+    passwordHash: u.passwordHash,
+    avatarUrl: u.avatarUrl || '',
+    lastSeen,
+    createdAt: created,
+    updatedAt: updated,
+    async comparePassword(pwd: string) {
+      if (u.passwordHash === '$2a$12$demoPasswordHashPlaceholder') return true;
+      return bcrypt.compare(pwd, u.passwordHash);
+    },
+    async save() {
+      doc.updatedAt = new Date();
+      savePersistedData();
+      return doc;
+    },
+    toObject() {
+      return {
+        id: _id.toString(),
+        _id,
+        displayName: u.displayName,
+        email: String(u.email).toLowerCase(),
+        avatarUrl: u.avatarUrl || '',
+        lastSeen: doc.lastSeen,
+        createdAt: doc.createdAt,
+        updatedAt: doc.updatedAt,
+      };
+    },
+    toJSON() {
+      return this.toObject();
+    },
+  };
+  return doc;
+}
+
+function buildConvObj(c: any): MockConversation {
+  const _id = typeof c._id === 'string' ? new mongoose.Types.ObjectId(c._id) : (c._id || new mongoose.Types.ObjectId());
+  const now = new Date();
+  const created = c.createdAt ? new Date(c.createdAt) : now;
+  const updated = c.updatedAt ? new Date(c.updatedAt) : now;
+
+  const members = (c.members || []).map((m: any) =>
+    typeof m === 'string' ? new mongoose.Types.ObjectId(m) : (m._id || m)
+  );
+
+  const doc: MockConversation = {
+    _id,
+    id: _id.toString(),
+    kind: c.kind,
+    members,
+    directKey: c.directKey,
+    group: c.group,
+    lastMessage: c.lastMessage,
+    createdAt: created,
+    updatedAt: updated,
+    async populate(_spec?: any) {
+      const populatedMembers = doc.members.map(m => {
+        const mStr = (m as any)._id?.toString() || m.toString();
+        const u = users.find(user => user._id.toString() === mStr || user.id === mStr);
+        return u || m;
+      });
+      doc.members = populatedMembers;
+
+      if (doc.lastMessage) {
+        const lmStr = (doc.lastMessage as any)._id?.toString() || doc.lastMessage.toString();
+        const lm = messages.find(msg => msg._id.toString() === lmStr || msg.id === lmStr);
+        if (lm) {
+          await lm.populate('sender');
+          doc.lastMessage = lm;
+        }
+      }
+      return doc;
+    },
+    async save() {
+      doc.updatedAt = new Date();
+      savePersistedData();
+      return doc;
+    },
+    toObject() {
+      return {
+        id: _id.toString(),
+        _id,
+        kind: c.kind,
+        members: doc.members,
+        directKey: c.directKey,
+        group: c.group,
+        lastMessage: doc.lastMessage,
+        createdAt: doc.createdAt,
+        updatedAt: doc.updatedAt,
+      };
+    },
+  };
+  return doc;
+}
+
+function buildMsgObj(m: any): MockMessage {
+  const _id = typeof m._id === 'string' ? new mongoose.Types.ObjectId(m._id) : (m._id || new mongoose.Types.ObjectId());
+  const now = new Date();
+  const created = m.createdAt ? new Date(m.createdAt) : now;
+  const updated = m.updatedAt ? new Date(m.updatedAt) : now;
+
+  const convId = typeof m.conversation === 'string' ? new mongoose.Types.ObjectId(m.conversation) : (m.conversation._id || m.conversation);
+  const senderId = typeof m.sender === 'string' ? new mongoose.Types.ObjectId(m.sender) : (m.sender._id || m.sender);
+  const readBy = (m.readBy || []).map((r: any) => ({
+    user: typeof r.user === 'string' ? new mongoose.Types.ObjectId(r.user) : (r.user._id || r.user),
+    readAt: r.readAt ? new Date(r.readAt) : now,
+  }));
+
+  const msgDoc: MockMessage = {
+    _id,
+    id: _id.toString(),
+    conversation: convId,
+    sender: senderId,
+    kind: m.kind || 'text',
+    content: m.content,
+    imageUrl: m.imageUrl,
+    clientMessageId: m.clientMessageId,
+    readBy,
+    createdAt: created,
+    updatedAt: updated,
+    async populate(field: any, _select?: string) {
+      if (field === 'sender' || (typeof field === 'object' && field.path === 'sender')) {
+        const sStr = (msgDoc.sender as any)._id?.toString() || msgDoc.sender.toString();
+        const senderUser = users.find(u => u._id.toString() === sStr || u.id === sStr);
+        if (senderUser) {
+          msgDoc.sender = senderUser;
+        }
+      }
+      return msgDoc;
+    },
+    async save() {
+      msgDoc.updatedAt = new Date();
+      savePersistedData();
+      return msgDoc;
+    },
+    toObject() {
+      return {
+        id: _id.toString(),
+        _id,
+        conversation: convId,
+        sender: msgDoc.sender,
+        kind: m.kind || 'text',
+        content: m.content,
+        imageUrl: m.imageUrl,
+        clientMessageId: m.clientMessageId,
+        readBy,
+        createdAt: msgDoc.createdAt,
+        updatedAt: msgDoc.updatedAt,
+      };
+    },
+  };
+  return msgDoc;
+}
+
+function loadPersistedData() {
+  try {
+    if (fs.existsSync(dbFilePath)) {
+      const fileContent = fs.readFileSync(dbFilePath, 'utf-8');
+      if (fileContent) {
+        const parsed = JSON.parse(fileContent);
+        if (Array.isArray(parsed.users)) {
+          for (const u of parsed.users) {
+            if (!users.some(ex => ex._id.toString() === u._id || ex.email.toLowerCase() === String(u.email).toLowerCase())) {
+              users.push(buildUserObj(u));
+            }
+          }
+        }
+        if (Array.isArray(parsed.conversations)) {
+          for (const c of parsed.conversations) {
+            if (!conversations.some(ex => ex._id.toString() === c._id)) {
+              conversations.push(buildConvObj(c));
+            }
+          }
+        }
+        if (Array.isArray(parsed.messages)) {
+          for (const m of parsed.messages) {
+            if (!messages.some(ex => ex._id.toString() === m._id)) {
+              messages.push(buildMsgObj(m));
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignore read errors
+  }
+}
+
+function savePersistedData() {
+  try {
+    const data = {
+      users: users.map(u => ({
+        _id: u._id.toString(),
+        displayName: u.displayName,
+        email: u.email,
+        passwordHash: u.passwordHash,
+        avatarUrl: u.avatarUrl,
+        lastSeen: u.lastSeen,
+        createdAt: u.createdAt,
+        updatedAt: u.updatedAt,
+      })),
+      conversations: conversations.map(c => ({
+        _id: c._id.toString(),
+        kind: c.kind,
+        members: c.members.map(m => (m as any)._id?.toString() || m.toString()),
+        directKey: c.directKey,
+        group: c.group,
+        lastMessage: (c.lastMessage as any)?._id?.toString() || c.lastMessage?.toString(),
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt,
+      })),
+      messages: messages.map(m => ({
+        _id: m._id.toString(),
+        conversation: (m.conversation as any)._id?.toString() || m.conversation.toString(),
+        sender: (m.sender as any)._id?.toString() || m.sender.toString(),
+        kind: m.kind,
+        content: m.content,
+        imageUrl: m.imageUrl,
+        clientMessageId: m.clientMessageId,
+        readBy: m.readBy.map(r => ({ user: r.user.toString(), readAt: r.readAt })),
+        createdAt: m.createdAt,
+        updatedAt: m.updatedAt,
+      })),
+    };
+    fs.writeFileSync(dbFilePath, JSON.stringify(data, null, 2), 'utf-8');
+  } catch {
+    // Ignore write errors
+  }
+}
+
+if (users.length === 0) {
   const defaultDemoUsers = [
     { displayName: 'Alex Rivera', email: 'alex@pulse.chat' },
     { displayName: 'Sarah Chen', email: 'sarah@pulse.chat' },
     { displayName: 'Jordan Lee', email: 'jordan@pulse.chat' },
   ];
   for (const d of defaultDemoUsers) {
-    const _id = new mongoose.Types.ObjectId();
-    const now = new Date();
-    users.push({
-      _id,
-      id: _id.toString(),
+    users.push(buildUserObj({
       displayName: d.displayName,
-      email: d.email.toLowerCase(),
+      email: d.email,
       passwordHash: '$2a$12$demoPasswordHashPlaceholder',
-      avatarUrl: '',
-      lastSeen: now,
-      createdAt: now,
-      updatedAt: now,
-      async comparePassword() { return true; },
-      async save() { this.updatedAt = new Date(); return this; },
-      toObject() {
-        return {
-          id: _id.toString(),
-          _id,
-          displayName: d.displayName,
-          email: d.email.toLowerCase(),
-          avatarUrl: '',
-          lastSeen: now,
-          createdAt: now,
-          updatedAt: now,
-        };
-      },
-      toJSON() { return this.toObject(); },
-    });
+    }));
   }
+  savePersistedData();
+} else {
+  loadPersistedData();
 }
-if (!globalThis.__inMemoryConversations) globalThis.__inMemoryConversations = conversations;
-if (!globalThis.__inMemoryMessages) globalThis.__inMemoryMessages = messages;
 
 export function enableInMemoryDb() {
   globalThis.__isInMemoryDbActive = true;
+  loadPersistedData();
 }
 
 export function isInMemoryDbActive(): boolean {
@@ -129,6 +356,7 @@ function createChainableQuery<T>(result: T) {
 
 export const inMemoryUserStore = {
   async exists(filter: { email?: string; _id?: any }) {
+    loadPersistedData();
     const found = users.find(u => {
       if (filter.email && u.email.toLowerCase() === filter.email.toLowerCase()) return true;
       if (filter._id && u._id.toString() === filter._id.toString()) return true;
@@ -138,46 +366,15 @@ export const inMemoryUserStore = {
   },
 
   async create(data: { displayName: string; email: string; passwordHash: string; avatarUrl?: string }) {
-    const _id = new mongoose.Types.ObjectId();
-    const now = new Date();
-    const userDoc: MockUser = {
-      _id,
-      id: _id.toString(),
-      displayName: data.displayName,
-      email: data.email.toLowerCase(),
-      passwordHash: data.passwordHash,
-      avatarUrl: data.avatarUrl || '',
-      lastSeen: now,
-      createdAt: now,
-      updatedAt: now,
-      async comparePassword(pwd: string) {
-        return bcrypt.compare(pwd, data.passwordHash);
-      },
-      async save() {
-        this.updatedAt = new Date();
-        return this;
-      },
-      toObject() {
-        return {
-          id: _id.toString(),
-          _id,
-          displayName: data.displayName,
-          email: data.email.toLowerCase(),
-          avatarUrl: data.avatarUrl || '',
-          lastSeen: now,
-          createdAt: now,
-          updatedAt: now,
-        };
-      },
-      toJSON() {
-        return this.toObject();
-      },
-    };
+    loadPersistedData();
+    const userDoc = buildUserObj(data);
     users.push(userDoc);
+    savePersistedData();
     return userDoc;
   },
 
   findOne(filter: { email?: string; _id?: any }) {
+    loadPersistedData();
     const found = users.find(u => {
       if (filter.email && u.email.toLowerCase() === String(filter.email).toLowerCase()) return true;
       if (filter._id && u._id.toString() === String(filter._id)) return true;
@@ -187,12 +384,14 @@ export const inMemoryUserStore = {
   },
 
   findById(id: any) {
+    loadPersistedData();
     const idStr = id?.toString?.() || String(id);
     const found = users.find(u => u._id.toString() === idStr || u.id === idStr) || null;
     return createChainableQuery(found);
   },
 
   find(filter: Record<string, any> = {}) {
+    loadPersistedData();
     let res = [...users];
 
     if (filter._id?.$ne) {
@@ -219,6 +418,7 @@ export const inMemoryUserStore = {
   },
 
   async findByIdAndUpdate(id: any, update: any, _options?: any) {
+    loadPersistedData();
     const idStr = id?.toString?.() || String(id);
     const user = users.find(u => u._id.toString() === idStr || u.id === idStr);
     if (user) {
@@ -226,6 +426,7 @@ export const inMemoryUserStore = {
       if (update.displayName) user.displayName = update.displayName;
       if (update.avatarUrl !== undefined) user.avatarUrl = update.avatarUrl;
       user.updatedAt = new Date();
+      savePersistedData();
     }
     return user || null;
   },
@@ -233,6 +434,7 @@ export const inMemoryUserStore = {
 
 export const inMemoryConversationStore = {
   find(filter: Record<string, any> = {}) {
+    loadPersistedData();
     let res = [...conversations];
     if (filter.members) {
       const memberId = filter.members.toString();
@@ -242,6 +444,7 @@ export const inMemoryConversationStore = {
   },
 
   findOne(filter: Record<string, any> = {}) {
+    loadPersistedData();
     const found = conversations.find(c => {
       if (filter.directKey && c.directKey === filter.directKey) return true;
       if (filter._id && c._id.toString() === filter._id.toString()) return true;
@@ -251,90 +454,50 @@ export const inMemoryConversationStore = {
   },
 
   findById(id: any) {
+    loadPersistedData();
     const idStr = id?.toString?.() || String(id);
     const found = conversations.find(c => c._id.toString() === idStr || c.id === idStr) || null;
     return createChainableQuery(found);
   },
 
   async create(data: any) {
-    const _id = new mongoose.Types.ObjectId();
-    const now = new Date();
-    const members = (data.members || []).map((m: any) =>
-      typeof m === 'string' ? new mongoose.Types.ObjectId(m) : (m._id || m)
-    );
-    const doc: MockConversation = {
-      _id,
-      id: _id.toString(),
-      kind: data.kind,
-      members,
-      directKey: data.directKey,
-      group: data.group,
-      lastMessage: data.lastMessage,
-      createdAt: now,
-      updatedAt: now,
-      async populate(_spec?: any) {
-        const populatedMembers = doc.members.map(m => {
-          const mStr = (m as any)._id?.toString() || m.toString();
-          const u = users.find(user => user._id.toString() === mStr || user.id === mStr);
-          return u || m;
-        });
-        doc.members = populatedMembers;
-
-        if (doc.lastMessage) {
-          const lmStr = (doc.lastMessage as any)._id?.toString() || doc.lastMessage.toString();
-          const lm = messages.find(msg => msg._id.toString() === lmStr || msg.id === lmStr);
-          if (lm) {
-            await lm.populate('sender');
-            doc.lastMessage = lm;
-          }
-        }
-        return doc;
-      },
-      async save() {
-        doc.updatedAt = new Date();
-        return doc;
-      },
-      toObject() {
-        return {
-          id: _id.toString(),
-          _id,
-          kind: data.kind,
-          members: doc.members,
-          directKey: data.directKey,
-          group: data.group,
-          lastMessage: doc.lastMessage,
-          createdAt: now,
-          updatedAt: now,
-        };
-      },
-    };
+    loadPersistedData();
+    const doc = buildConvObj(data);
     conversations.push(doc);
+    savePersistedData();
     return doc;
   },
 
   async findByIdAndUpdate(id: any, update: any, _options?: any) {
+    loadPersistedData();
     const idStr = id?.toString?.() || String(id);
     const conv = conversations.find(c => c._id.toString() === idStr || c.id === idStr);
     if (conv) {
       if (update.lastMessage) conv.lastMessage = update.lastMessage;
       if (update.group) conv.group = { ...conv.group, ...update.group };
       conv.updatedAt = new Date();
+      savePersistedData();
     }
     return conv || null;
   },
 
   async deleteOne(filter: Record<string, any>) {
+    loadPersistedData();
     const idx = conversations.findIndex(c => {
       if (filter._id && c._id.toString() === filter._id.toString()) return true;
       return false;
     });
-    if (idx !== -1) conversations.splice(idx, 1);
+    if (idx !== -1) {
+      conversations.splice(idx, 1);
+      savePersistedData();
+    }
     return { deletedCount: idx !== -1 ? 1 : 0 };
   },
 };
 
 export const inMemoryMessageStore = {
   find(filter: Record<string, any> = {}) {
+    loadPersistedData();
     let res = [...messages];
     if (filter.conversation) {
       const convId = filter.conversation.toString();
@@ -344,6 +507,7 @@ export const inMemoryMessageStore = {
   },
 
   findOne(filter: Record<string, any> = {}) {
+    loadPersistedData();
     const found = messages.find(m => {
       if (filter._id && m._id.toString() === filter._id.toString()) return true;
       if (filter.conversation && filter.sender && filter.clientMessageId) {
@@ -359,62 +523,15 @@ export const inMemoryMessageStore = {
   },
 
   async create(data: any) {
-    const _id = new mongoose.Types.ObjectId();
-    const now = new Date();
-    const convId = typeof data.conversation === 'string' ? new mongoose.Types.ObjectId(data.conversation) : (data.conversation._id || data.conversation);
-    const senderId = typeof data.sender === 'string' ? new mongoose.Types.ObjectId(data.sender) : (data.sender._id || data.sender);
-    const readBy = (data.readBy || []).map((r: any) => ({
-      user: typeof r.user === 'string' ? new mongoose.Types.ObjectId(r.user) : (r.user._id || r.user),
-      readAt: r.readAt || now,
-    }));
-
-    const msgDoc: MockMessage = {
-      _id,
-      id: _id.toString(),
-      conversation: convId,
-      sender: senderId,
-      kind: data.kind || 'text',
-      content: data.content,
-      imageUrl: data.imageUrl,
-      clientMessageId: data.clientMessageId,
-      readBy,
-      createdAt: now,
-      updatedAt: now,
-      async populate(field: any, _select?: string) {
-        if (field === 'sender' || (typeof field === 'object' && field.path === 'sender')) {
-          const sStr = (msgDoc.sender as any)._id?.toString() || msgDoc.sender.toString();
-          const senderUser = users.find(u => u._id.toString() === sStr || u.id === sStr);
-          if (senderUser) {
-            msgDoc.sender = senderUser;
-          }
-        }
-        return msgDoc;
-      },
-      async save() {
-        msgDoc.updatedAt = new Date();
-        return msgDoc;
-      },
-      toObject() {
-        return {
-          id: _id.toString(),
-          _id,
-          conversation: convId,
-          sender: msgDoc.sender,
-          kind: data.kind || 'text',
-          content: data.content,
-          imageUrl: data.imageUrl,
-          clientMessageId: data.clientMessageId,
-          readBy,
-          createdAt: now,
-          updatedAt: now,
-        };
-      },
-    };
+    loadPersistedData();
+    const msgDoc = buildMsgObj(data);
     messages.push(msgDoc);
+    savePersistedData();
     return msgDoc;
   },
 
   async countDocuments(filter: Record<string, any> = {}) {
+    loadPersistedData();
     let res = [...messages];
     if (filter.conversation) {
       const convId = filter.conversation.toString();
@@ -435,6 +552,7 @@ export const inMemoryMessageStore = {
   },
 
   async updateMany(filter: Record<string, any>, update: any) {
+    loadPersistedData();
     let count = 0;
     for (const msg of messages) {
       let matches = true;
@@ -451,6 +569,7 @@ export const inMemoryMessageStore = {
         count++;
       }
     }
+    if (count > 0) savePersistedData();
     return { modifiedCount: count };
   },
 };
