@@ -12,7 +12,8 @@ export default handleServerless(async (req: VercelRequest, res: VercelResponse) 
     return;
   }
 
-  const input = loginSchema.parse(req.body);
+  const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
+  const input = loginSchema.parse(body);
   const user = await User.findOne({ email: input.email }).select('+passwordHash');
   const passwordMatches = user ? await user.comparePassword(input.password) : false;
 

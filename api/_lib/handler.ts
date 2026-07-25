@@ -32,6 +32,14 @@ export function handleServerless(handler: AnyVercelHandler, options: { requireAu
     }
 
     try {
+      if (req.body && typeof req.body === 'string') {
+        try {
+          req.body = JSON.parse(req.body);
+        } catch {
+          // keep as string
+        }
+      }
+
       await connectDatabase();
 
       if (options.requireAuth) {
@@ -55,23 +63,37 @@ export function handleServerless(handler: AnyVercelHandler, options: { requireAu
         return;
       }
 
-      if (error && typeof error === 'object' && 'name' in error && error.name === 'ZodError') {
-        const zodErr = error as any;
-        res.status(400).json({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: zodErr.issues?.[0]?.message || 'Validation failed.',
-            details: zodErr.issues,
-          },
-        });
-        return;
+      if (error && typeof error === 'object' && ('name' in error || 'issues' in error)) {
+        const errObj = error as any;
+        if (errObj.name === 'ZodError' || Array.isArray(errObj.issues)) {
+          const firstMessage = errObj.issues?.[0]?.message || 'Validation failed.';
+          const fieldErrors: Record<string, string[]> = {};
+          if (Array.isArray(errObj.issues)) {
+            for (const issue of errObj.issues) {
+              const path = issue.path?.join('.') || 'form';
+              if (!fieldErrors[path]) fieldErrors[path] = [];
+              fieldErrors[path].push(issue.message);
+            }
+          }
+          res.status(400).json({
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: firstMessage,
+              details: { fieldErrors, issues: errObj.issues },
+            },
+          });
+          return;
+        }
       }
 
       console.error('Unhandled serverless function error:', error);
+      const errMsg = error instanceof Error ? error.message : 'An unexpected error occurred.';
       res.status(500).json({
         error: {
           code: 'INTERNAL_ERROR',
-          message: error instanceof Error ? error.message : 'An unexpected error occurred.',
+          message: errMsg.includes('MONGODB_URI') || errMsg.includes('Mongo')
+            ? 'Database connection failed. Please check MONGODB_URI environment variable.'
+            : errMsg,
         },
       });
     }

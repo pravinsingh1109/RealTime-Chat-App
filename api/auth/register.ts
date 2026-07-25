@@ -13,7 +13,8 @@ export default handleServerless(async (req: VercelRequest, res: VercelResponse) 
     return;
   }
 
-  const input = registerSchema.parse(req.body);
+  const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
+  const input = registerSchema.parse(body);
   const existingUser = await User.exists({ email: input.email });
   if (existingUser) {
     throw new ApiError(409, 'An account with this email already exists.', 'EMAIL_IN_USE');

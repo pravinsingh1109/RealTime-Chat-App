@@ -61,12 +61,17 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     : await response.text().catch(() => undefined);
 
   if (!response.ok) {
-    let message = 'Something went wrong.';
+    let message = `Request failed with status ${response.status}.`;
 
-    if (typeof payload === 'object' && payload !== null) {
+    if (typeof payload === 'string' && payload.trim()) {
+      if (!payload.trim().startsWith('<')) {
+        message = payload.trim();
+      } else {
+        message = `Server returned an error page (${response.status} ${response.statusText || ''}). Check backend deployment and environment variables.`;
+      }
+    } else if (typeof payload === 'object' && payload !== null) {
       const p = payload as Record<string, unknown>;
 
-      // Server uses { error: { code, message, details } } shape
       if (p.error) {
         const err = p.error;
         if (typeof err === 'string') message = err;
@@ -84,7 +89,6 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
           }
         }
       } else {
-        // Other payload shapes: { message } or { error }
         if (typeof p.message === 'string') message = p.message;
         else if (typeof p.error === 'string') message = p.error;
         else {
@@ -95,6 +99,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
           }
         }
       }
+    } else if (response.statusText) {
+      message = `${response.statusText} (${response.status})`;
     }
 
     throw new ApiError(message, response.status, payload);
