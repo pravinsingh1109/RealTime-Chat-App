@@ -12,6 +12,7 @@ export interface MockUser {
   createdAt: Date;
   updatedAt: Date;
   comparePassword(pwd: string): Promise<boolean>;
+  save(): Promise<MockUser>;
   toObject(): Record<string, unknown>;
   toJSON(): Record<string, unknown>;
 }
@@ -32,6 +33,7 @@ export interface MockConversation {
   createdAt: Date;
   updatedAt: Date;
   populate(spec?: any): Promise<MockConversation>;
+  save(): Promise<MockConversation>;
   toObject(): Record<string, unknown>;
 }
 
@@ -48,6 +50,7 @@ export interface MockMessage {
   createdAt: Date;
   updatedAt: Date;
   populate(field: any, select?: string): Promise<MockMessage>;
+  save(): Promise<MockMessage>;
   toObject(): Record<string, unknown>;
 }
 
@@ -83,6 +86,7 @@ if (!globalThis.__inMemoryUsers) {
       createdAt: now,
       updatedAt: now,
       async comparePassword() { return true; },
+      async save() { this.updatedAt = new Date(); return this; },
       toObject() {
         return {
           id: _id.toString(),
@@ -148,6 +152,10 @@ export const inMemoryUserStore = {
       updatedAt: now,
       async comparePassword(pwd: string) {
         return bcrypt.compare(pwd, data.passwordHash);
+      },
+      async save() {
+        this.updatedAt = new Date();
+        return this;
       },
       toObject() {
         return {
@@ -282,6 +290,10 @@ export const inMemoryConversationStore = {
         }
         return doc;
       },
+      async save() {
+        doc.updatedAt = new Date();
+        return doc;
+      },
       toObject() {
         return {
           id: _id.toString(),
@@ -376,6 +388,10 @@ export const inMemoryMessageStore = {
             msgDoc.sender = senderUser;
           }
         }
+        return msgDoc;
+      },
+      async save() {
+        msgDoc.updatedAt = new Date();
         return msgDoc;
       },
       toObject() {
