@@ -13,7 +13,9 @@ export default handleServerless(async (req: AuthenticatedVercelRequest, res: Ver
     return;
   }
 
-  const conversationId = Array.isArray(req.query.conversationId) ? req.query.conversationId[0] : req.query.conversationId;
+  const rawId = Array.isArray(req.query.conversationId) ? req.query.conversationId[0] : req.query.conversationId;
+  const urlMatch = req.url ? req.url.match(/\/api\/conversations\/([^/?#]+)/) : null;
+  const conversationId = rawId || (urlMatch ? urlMatch[1] : undefined);
   if (!conversationId) {
     throw new ApiError(400, 'Conversation ID is required.', 'CONVERSATION_ID_REQUIRED');
   }

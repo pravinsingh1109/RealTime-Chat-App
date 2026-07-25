@@ -11,7 +11,9 @@ export default handleServerless(async (req: AuthenticatedVercelRequest, res: Ver
     return;
   }
 
-  const targetIdStr = Array.isArray(req.query.userId) ? req.query.userId[0] : req.query.userId;
+  const rawTargetId = Array.isArray(req.query.userId) ? req.query.userId[0] : req.query.userId;
+  const urlMatch = req.url ? req.url.match(/\/api\/users\/([^/?#]+)/) : null;
+  const targetIdStr = rawTargetId || (urlMatch ? urlMatch[1] : undefined);
   const userId = requireObjectId(String(targetIdStr), 'user id');
   const user = await User.findById(userId).select('displayName email avatarUrl lastSeen createdAt').lean();
   if (!user) {
