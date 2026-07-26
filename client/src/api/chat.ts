@@ -101,6 +101,49 @@ function unwrapItem(raw: unknown, keys: string[]): unknown {
   return raw;
 }
 
+export function compressImage(file: File, maxDimension = 1200, quality = 0.7): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const src = (e.target?.result as string) || '';
+      if (!file.type.startsWith('image/')) {
+        resolve(src);
+        return;
+      }
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          } else {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(src);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => resolve(src);
+      img.src = src;
+    };
+    reader.onerror = () => resolve('');
+    reader.readAsDataURL(file);
+  });
+}
+
 export const chatApi = {
   async listConversations(): Promise<Conversation[]> {
     const raw = await request<unknown>('/conversations');
@@ -140,25 +183,18 @@ export const chatApi = {
   },
 
   async uploadImage(file: File): Promise<string> {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64Data = (reader.result as string) || '';
-        try {
-          const raw = await request<unknown>('/uploads/image', {
-            method: 'POST',
-            body: { image: base64Data },
-          });
-          const record = asRecord(raw);
-          const data = asRecord(record.data);
-          const url = asString(record.url ?? record.imageUrl ?? data.url ?? data.imageUrl) || base64Data;
-          resolve(url);
-        } catch {
-          resolve(base64Data);
-        }
-      };
-      reader.onerror = () => resolve('');
-      reader.readAsDataURL(file);
-    });
+    const base64Data = await compressImage(file);
+    if (!base64Data) throw new Error('Could not process image file.');
+    try {
+      const raw = await request<unknown>('/uploads/image', {
+        method: 'POST',
+        body: { image: base64Data },
+      });
+      const record = asRecord(raw);
+      const data = asRecord(record.data);
+      return asString(record.url ?? record.imageUrl ?? data.url ?? data.imageUrl) || base64Data;
+    } catch {
+      return base64Data;
+    }
   },
 };
