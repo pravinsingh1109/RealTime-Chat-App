@@ -140,13 +140,25 @@ export const chatApi = {
   },
 
   async uploadImage(file: File): Promise<string> {
-    const formData = new FormData();
-    formData.append('image', file);
-    const raw = await request<unknown>('/uploads/image', { method: 'POST', body: formData });
-    const record = asRecord(raw);
-    const data = asRecord(record.data);
-    const url = asString(record.url ?? record.imageUrl ?? data.url ?? data.imageUrl);
-    if (!url) throw new Error('The server did not return an image URL.');
-    return url;
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const base64Data = reader.result as string;
+          const raw = await request<unknown>('/uploads/image', {
+            method: 'POST',
+            body: { image: base64Data },
+          });
+          const record = asRecord(raw);
+          const data = asRecord(record.data);
+          const url = asString(record.url ?? record.imageUrl ?? data.url ?? data.imageUrl) || base64Data;
+          resolve(url);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+    });
   },
 };
