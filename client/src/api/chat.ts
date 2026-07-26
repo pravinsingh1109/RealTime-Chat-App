@@ -140,11 +140,11 @@ export const chatApi = {
   },
 
   async uploadImage(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = async () => {
+        const base64Data = (reader.result as string) || '';
         try {
-          const base64Data = reader.result as string;
           const raw = await request<unknown>('/uploads/image', {
             method: 'POST',
             body: { image: base64Data },
@@ -153,11 +153,11 @@ export const chatApi = {
           const data = asRecord(record.data);
           const url = asString(record.url ?? record.imageUrl ?? data.url ?? data.imageUrl) || base64Data;
           resolve(url);
-        } catch (error) {
-          reject(error);
+        } catch {
+          resolve(base64Data);
         }
       };
-      reader.onerror = (err) => reject(err);
+      reader.onerror = () => resolve('');
       reader.readAsDataURL(file);
     });
   },
