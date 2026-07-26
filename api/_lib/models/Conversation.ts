@@ -1,6 +1,8 @@
 import mongoose from 'mongoose';
 import type { HydratedDocument, Model, Types } from 'mongoose';
 import { inMemoryConversationStore, isInMemoryDbActive } from '../inMemoryStore.js';
+import './User.js';
+import './Message.js';
 
 export type ConversationKind = 'direct' | 'group';
 

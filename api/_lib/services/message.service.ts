@@ -1,5 +1,6 @@
 import { Conversation } from '../models/Conversation.js';
 import { Message, type MessageDocument, type MessageKind } from '../models/Message.js';
+import { User } from '../models/User.js';
 import { getMemberConversation } from './conversation.service.js';
 
 export interface CreateMessageInput {

@@ -1,5 +1,7 @@
 import type { Types } from 'mongoose';
 import { Conversation, type ConversationDocument } from '../models/Conversation.js';
+import { User } from '../models/User.js';
+import { Message } from '../models/Message.js';
 import { ApiError } from '../errors.js';
 import { serializeId } from '../serializers.js';
 
