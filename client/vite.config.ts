@@ -76,7 +76,7 @@ function apiDevPlugin(): Plugin {
             return next();
           }
 
-          let bodyData: any = undefined;
+          let bodyData: unknown = undefined;
           if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method || '')) {
             const chunks: Uint8Array[] = [];
             for await (const chunk of req) {
@@ -108,18 +108,18 @@ function apiDevPlugin(): Plugin {
               res.statusCode = code;
               return vercelRes;
             },
-            json(data: any) {
+            json(data: unknown) {
               if (!res.headersSent) {
                 res.setHeader('Content-Type', 'application/json');
               }
               res.end(JSON.stringify(data));
               return vercelRes;
             },
-            send(data: any) {
+            send(data: unknown) {
               if (typeof data === 'object' && data !== null && !Buffer.isBuffer(data)) {
                 return vercelRes.json(data);
               }
-              res.end(data);
+              res.end(data as string | Buffer);
               return vercelRes;
             },
           });
@@ -130,15 +130,16 @@ function apiDevPlugin(): Plugin {
           } else {
             next();
           }
-        } catch (err: any) {
+        } catch (err: unknown) {
           console.error('Local API Handler Error:', err);
           if (!res.headersSent) {
             res.statusCode = 500;
             res.setHeader('Content-Type', 'application/json');
+            const errorMsg = err instanceof Error ? err.message : 'Internal Server Error';
             res.end(JSON.stringify({
               error: {
                 code: 'INTERNAL_ERROR',
-                message: err?.message || 'Internal Server Error',
+                message: errorMsg,
               },
             }));
           }

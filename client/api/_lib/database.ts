@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { env } from './env.js';
 import { ApiError } from './errors.js';
 import { enableInMemoryDb, isInMemoryDbActive } from './inMemoryStore.js';
+import './models/index.js';
 
 interface MongooseCache {
   conn: typeof mongoose | null;
